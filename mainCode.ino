@@ -1,8 +1,3 @@
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Part 2 Quadcopter Flight Code.                                                                                      //
-// Written by Euan French with contributions by Harvir Segue. Some open source libraries used.                         //
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
- 
 #include <SD.h>
 #include <SPI.h>
 #include <EEPROM.h>
@@ -10,7 +5,6 @@
 #include <PID_v1.h> // Open source PID lib
 #include <digitalWriteFast.h> // Open source pin register manipulation library
 #include <NewPing.h> // Non-blocking ultrasonic library
-
 
 // Pins currently in use
 // Using 'const uint8_t' instead of just int for memory saving reasons
@@ -30,10 +24,10 @@ const bool onlyHover = false; // Automatic throttle, hover at correct height
 const bool hoverAndDrop = true; // Automatic thqrottle, hover at correct height, drop beanbag at correct height
 
 // Autopilot variables
-double Setpoint = 50;
+double Setpoint = 100;
 double Input, Output;
-double preKp=0.75, preKi=0.3, preKd=0.75; // Values before drop (PLACEHOLDER)
-double postKp=1.5, postKi=0.5, postKd=0.75; // Values after drop (PLACEHOLDER)
+double preKp=0.55, preKi=0.7, preKd=0.5; // Values before drop 
+double postKp=0.55, postKi=0.7, postKd=1; // Values after drop 
 PID myPID(&Input, &Output, &Setpoint, preKp, preKi, preKd, P_ON_M, DIRECT);
 
 // Global variables
@@ -43,25 +37,26 @@ NewPing sonar(pTrigger, pEcho, 500);
 File logfile;
 char logname[15];
 unsigned long timer; // Timer variable (needs to be in startup and loop)
-//float alpha = 0.5; // Used for smoothing
 float currentAlt;
-float lastDistance;
 float lastSignal;
 bool dropped = false;
 bool pidSet = false;
 bool justRun = false;
 int cycles = 0;
 float dropTimer;
-float lastJeff;
+float lastAlt;
 
 // Custom functions
  
 float ultrasonicRead() { // Computes smoothed output from ultrasonic sensor
-  float jeff1 = sonar.convert_cm(sonar.ping_median(2));
+  float instAlt = sonar.convert_cm(sonar.ping_median(2));
+  if(fabs(instAlt - lastAlt) > 20){
+    return lastAlt;
+  }
   float alpha = 0.8;
-  float smoothedJeff = alpha*jeff1 + (1-alpha)*lastJeff;
-  lastJeff = smoothedJeff;
-  return smoothedJeff;
+  float smoothedAlt = alpha*instAlt + (1-alpha)*lastAlt;
+  lastAlt = smoothedAlt;
+  return smoothedAlt;
 }
 
 void checkAndSet() {
@@ -103,11 +98,8 @@ void checkAndSet() {
 void doThrottle() {
   if(pidSet==true && justRun==false){   // check if pid flag is set, and that the pid wasnt just calculated because the swtich changed, and if so, update the pid
     Input = currentAlt;
-    Serial.print(currentAlt);
     myPID.Compute();
     naze32.write(Output);
-    Serial.print(",");
-    Serial.println(Output);
   }
   else if(pidSet==true && justRun==true){ // if the PID was already calculated because the switch changed, then just reset the flag for the next loop
     justRun = false;
@@ -127,9 +119,9 @@ void checkDrop() {
       logfile.close();
       dropped = true;
     };
-//    if(dropped==true && (millis()-dropTimer > 1000)){
-//     dropServo.write(30);
-//    }
+    if(dropped==true && (millis()-dropTimer > 1000)){
+     dropServo.write(30);
+    }
 }
 
 void writeSD() {
@@ -144,9 +136,7 @@ void writeSD() {
   logfile = SD.open(logname, FILE_WRITE);
   logfile.println(writeOut);
   logfile.close();
-
 }
-
 
 // Standard functions
  
@@ -172,7 +162,6 @@ void setup()  {
   // Ultrasonic setup
   pinModeFast(pTrigger, OUTPUT); // Sets the trigger pin, output
   pinModeFast(pEcho, INPUT); // Sets the echo pin, input
-
  
   // Throttle logging setup
   pinModeFast(pRadioSwitch, INPUT);
@@ -189,50 +178,45 @@ void setup()  {
   lastSignal = pulseIn(A0, HIGH);
 
   // Check which mode the program is in, and run
-  if((manual&&onlyDrop)||(manual&&onlyHover)||(manual&&hoverAndDrop)||(onlyDrop&&onlyHover)||(onlyDrop&&hoverAndDrop)||(onlyHover&&hoverAndDrop)) {
-    while(1) { // For getting manual flight input/response data
+  if((manual&&onlyDrop)||(manual&&onlyHover)||(manual&&hoverAndDrop)||(onlyDrop&&onlyHover)||(onlyDrop&&hoverAndDrop)||(onlyHover&&hoverAndDrop)) { // 4 input one-and-only-one high XNOR
+    while(1) { // Locks out the drone if the mode is configured incorrectly
       digitalWriteFast(pRelaySwitch, HIGH);
       naze32.write(1200);
       delay(500);
       naze32.write(1000);
       delay(500);
-      Serial.println("in exception");
     }
   }
   else if(manual == true) {
-    while(1) { // For objective 1 - drop the beanbag when at correct height
+    while(1) { // For simple data gathering
       currentAlt = ultrasonicRead();
       doThrottle();
       writeSD();
-      Serial.println("In manual");
     }
   }  
   else if(onlyDrop == true) {
-    while(1) { // For objective 2 - hover at correct height
+    while(1) { // For objective 1 - drop the beanbag when at correct height 
       currentAlt = ultrasonicRead();
       doThrottle();
       checkDrop();
       writeSD();
-      Serial.println("In onlyDrop");
     }
   }
   else if(onlyHover == true) {
-    while(1) { // For objective 3 - hover at correct height, drop beanbag, continue to hover
+    while(1) { // For objective 2 - hover at correct height
       currentAlt = ultrasonicRead();
       checkAndSet();
       doThrottle();
       writeSD();
-      Serial.println("In onlyHover");
     }
   }
   else if(hoverAndDrop == true) {
-    while(1){
+    while(1){ // For objective 3 - hover at correct height, drop beanbag, continue to hover
       currentAlt = ultrasonicRead();
       checkAndSet();
       doThrottle();
       checkDrop();
       writeSD();
-      Serial.println(currentAlt);
     }
   }
 }
